@@ -49,7 +49,7 @@ def adjustCopyParameters(destLevel, sourceLevel, sourceBox, destinationPoint):
 
 
 def copyBlocksFromIter(destLevel, sourceLevel, sourceBox, destinationPoint, blocksToCopy=None, entities=True,
-                       create=False, biomes=False, tileTicks=True, staticCommands=False, first = False):
+                       create=False, biomes=False, tileTicks=True, staticCommands=False, moveSpawnerPos=False, first=False):
     """ copy blocks between two infinite levels by looping through the
     destination's chunks. make a sub-box of the source level for each chunk
     and copy block and entities in the sub box to the dest chunk."""
@@ -131,11 +131,22 @@ def copyBlocksFromIter(destLevel, sourceLevel, sourceBox, destinationPoint, bloc
                     eTag = Entity.copyWithOffset(entityTag, copyOffset)
                     destLevel.addEntity(eTag)
 
+            def copy(p):
+                return p in sourceChunkBoxInDestLevel and (blocksToCopy is None or mask[
+                    p[0] - sourceChunkBoxInDestLevel.minx,
+                    p[2] - sourceChunkBoxInDestLevel.minz,
+                    p[1] - sourceChunkBoxInDestLevel.miny,
+                ])
+
+            destChunk.removeTileEntities(copy)
+
             tileEntities = sourceChunk.getTileEntitiesInBox(destChunkBoxInSourceLevel)
             t += len(tileEntities)
             for tileEntityTag in tileEntities:
-                eTag = TileEntity.copyWithOffset(tileEntityTag, copyOffset, staticCommands, first)
+                eTag = TileEntity.copyWithOffset(tileEntityTag, copyOffset, staticCommands, moveSpawnerPos, first)
                 destLevel.addTileEntity(eTag)
+
+            destChunk.removeTileTicks(copy)
 
             tileTicksList = sourceChunk.getTileTicksInBox(destChunkBoxInSourceLevel)
             tt += len(tileTicksList)
@@ -156,9 +167,9 @@ def copyBlocksFromIter(destLevel, sourceLevel, sourceBox, destinationPoint, bloc
 
 
 def copyBlocksFrom(destLevel, sourceLevel, sourceBox, destinationPoint, blocksToCopy=None, entities=True, create=False,
-                   biomes=False, tileTicks=True, staticCommands=False, first=False):
+                   biomes=False, tileTicks=True, staticCommands=False, moveSpawnerPos=False, first=False):
     return exhaust(
-        copyBlocksFromIter(destLevel, sourceLevel, sourceBox, destinationPoint, blocksToCopy, entities, create, biomes, tileTicks,staticCommands, first))
+        copyBlocksFromIter(destLevel, sourceLevel, sourceBox, destinationPoint, blocksToCopy, entities, create, biomes, tileTicks,staticCommands, moveSpawnerPos,first))
 
 
 
