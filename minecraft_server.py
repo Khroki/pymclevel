@@ -92,7 +92,7 @@ subfolders, one for each version of the server. Each subfolder must hold at
 least one file named minecraft_server.jar, and the subfolder's name should
 have the server's version plus the names of any installed mods.
 
-There may already be a subfolder here (for example, "Beta 1.7.3") if you have
+There may already be a subfolder here (for example, "Release 1.7.10") if you have
 used the Chunk Create feature in MCEdit to create chunks using the server.
 
 Version numbers can be automatically detected. If you place one or more
