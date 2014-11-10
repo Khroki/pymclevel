@@ -26,12 +26,11 @@ from entity import Entity, TileEntity, TileTick
 from faces import FaceXDecreasing, FaceXIncreasing, FaceZDecreasing, FaceZIncreasing
 from level import LightedChunk, EntityLevel, computeChunkHeightMap, MCLevel, ChunkBase
 from materials import alphaMaterials
-from mclevelbase import ChunkMalformed, ChunkNotPresent, exhaust, PlayerNotFound
+from mclevelbase import ChunkMalformed, ChunkNotPresent, ChunkAccessDenied,ChunkConcurrentException,exhaust, PlayerNotFound
 import nbt
 from numpy import array, clip, maximum, zeros
 from regionfile import MCRegionFile
 import version_utils
-import scoreboard
 import player
 
 log = getLogger(__name__)
@@ -262,10 +261,7 @@ class AnvilChunk(LightedChunk):
             self.world.chunksNeedingLighting.discard(self.chunkPosition)
 
     def generateHeightMap(self):
-        if self.world.dimNo == DIM_NETHER:
-            self.HeightMap[:] = 0
-        else:
-            computeChunkHeightMap(self.materials, self.Blocks, self.HeightMap)
+        computeChunkHeightMap(self.materials, self.Blocks, self.HeightMap)
 
     def addEntity(self, entityTag):
 
@@ -1176,7 +1172,7 @@ class MCInfdevOldLevel(ChunkedLevelMixin, EntityLevel):
     def saveInPlaceGen(self):
         if self.readonly:
             raise IOError, "World is opened read only."
-
+        self.saving = True
         self.checkSessionLock()
 
         for level in self.dimensions.itervalues():
@@ -1211,12 +1207,15 @@ class MCInfdevOldLevel(ChunkedLevelMixin, EntityLevel):
         self.playerTagCache.clear()
 
         self.root_tag.save(self.filename)
+        self.saving = False
         log.info(u"Saved {0} chunks (dim {1})".format(dirtyChunkCount, self.dimNo))
 
     def unload(self):
         """
         Unload all chunks and close all open filehandles.
         """
+        if self.saving:
+            raise ChunkAccessDenied
         self.worldFolder.closeRegions()
         if not self.readonly:
             self.unsavedWorkFolder.closeRegions()
@@ -1288,8 +1287,29 @@ class MCInfdevOldLevel(ChunkedLevelMixin, EntityLevel):
     def init_scoreboard(self):
         if os.path.exists(self.worldFolder.getFolderPath("data")):
                 if os.path.exists(self.worldFolder.getFolderPath("data")+"/scoreboard.dat"):
-                    return scoreboard.Scoreboard(self, False)
-        return scoreboard.Scoreboard(self, True)
+                    nbt.load(self.level.worldFolder.getFolderPath("data")+"/scoreboard.dat")
+                else:
+                    root_tag = nbt.TAG_Compound()
+                    root_tag["data"] = nbt.TAG_Compound()
+                    root_tag["data"]["Objectives"] = nbt.TAG_List()
+                    root_tag["data"]["PlayerScores"] = nbt.TAG_List()
+                    root_tag["data"]["Teams"] = nbt.TAG_List()
+                    root_tag["data"]["DisplaySlots"] = nbt.TAG_List()
+                    self.save_scoreboard(root_tag)
+                    return root_tag
+        else:
+            self.worldFolder.getFolderPath("data")
+            root_tag = nbt.TAG_Compound()
+            root_tag["data"] = nbt.TAG_Compound()
+            root_tag["data"]["Objectives"] = nbt.TAG_List()
+            root_tag["data"]["PlayerScores"] = nbt.TAG_List()
+            root_tag["data"]["Teams"] = nbt.TAG_List()
+            root_tag["data"]["DisplaySlots"] = nbt.TAG_List()
+            self.save_scoreboard(root_tag)
+            return root_tag
+        
+    def save_scoreboard(self, score):
+        score.save(self.worldFolder.getFolderPath("data")+"/scoreboard.dat")
     
     def init_player_data(self):
         player_data = []
@@ -1440,6 +1460,8 @@ class MCInfdevOldLevel(ChunkedLevelMixin, EntityLevel):
         assert isinstance(world, MCInfdevOldLevel)
         if self.readonly:
             raise IOError, "World is opened read only."
+        if world.saving | self.saving:
+            raise ChunkAccessDenied
         self.checkSessionLock()
 
         destChunk = self._loadedChunks.get((cx, cz))
@@ -1490,6 +1512,9 @@ class MCInfdevOldLevel(ChunkedLevelMixin, EntityLevel):
     def _getChunkData(self, cx, cz):
         chunkData = self._loadedChunkData.get((cx, cz))
         if chunkData is not None: return chunkData
+
+        if self.saving:
+            raise ChunkAccessDenied
 
         try:
             data = self._getChunkBytes(cx, cz)
