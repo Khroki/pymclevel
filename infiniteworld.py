@@ -1022,6 +1022,8 @@ class AnvilWorldFolder(object):
 
 
 class MCInfdevOldLevel(ChunkedLevelMixin, EntityLevel):
+    playersFolder = None
+
     def __init__(self, filename=None, create=False, random_seed=None, last_played=None, readonly=False):
         """
         Load an Alpha level from the given filename. It can point to either
@@ -1203,6 +1205,11 @@ class MCInfdevOldLevel(ChunkedLevelMixin, EntityLevel):
 
         for path, tag in self.playerTagCache.iteritems():
             tag.save(path)
+
+        if not self.playersFolder == None:
+            for file_ in os.listdir(self.playersFolder):
+                if file_.endswith(".dat") and file_[:-4] not in self.players:
+                    os.remove(os.path.join(self.playersFolder, file_))
 
         self.playerTagCache.clear()
 
@@ -1793,15 +1800,14 @@ class MCInfdevOldLevel(ChunkedLevelMixin, EntityLevel):
             raise PlayerNotFound(player)
         else:
             playerFilePath = self.getPlayerPath(player)
-            if os.path.exists(playerFilePath):
-                # multiplayer world, found this player
-                playerTag = self.playerTagCache.get(playerFilePath)
-                if playerTag is None:
+            playerTag = self.playerTagCache.get(playerFilePath)
+            if playerTag is None:
+                if os.path.exists(playerFilePath):
                     playerTag = nbt.load(playerFilePath)
                     self.playerTagCache[playerFilePath] = playerTag
-                return playerTag
-            else:
-                raise PlayerNotFound(player)
+                else:
+                    raise PlayerNotFound(player)
+            return playerTag
 
     def getPlayerDimension(self, player="Player"):
         playerTag = self.getPlayerTag(player)
@@ -1903,10 +1909,7 @@ class MCInfdevOldLevel(ChunkedLevelMixin, EntityLevel):
         playerTag['Rotation'] = nbt.TAG_List([nbt.TAG_Float(0), nbt.TAG_Float(0)])
 
         if playerName != "Player":
-            if self.readonly:
-                raise IOError, "World is opened read only."
-            self.checkSessionLock()
-            playerTag.save(self.getPlayerPath(playerName))
+            self.playerTagCache[self.getPlayerPath(playerName)] = playerTag
 
 
 class MCAlphaDimension(MCInfdevOldLevel):
