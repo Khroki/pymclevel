@@ -3,6 +3,7 @@ Created on Jul 22, 2011
 
 @author: Rio
 '''
+import collections
 
 import copy
 from datetime import datetime
@@ -32,6 +33,7 @@ from numpy import array, clip, maximum, zeros
 from regionfile import MCRegionFile
 import version_utils
 import player
+import logging
 
 log = getLogger(__name__)
 
@@ -902,14 +904,17 @@ class AnvilWorldFolder(object):
         path = path.replace("/", os.path.sep)
         return os.path.join(self.filename, path)
 
-    def getFolderPath(self, path, checksExists=True):
-        if checksExists and not os.path.exists(self.filename):
+    def getFolderPath(self, path, checksExists=True, generation=False):
+        if checksExists and not os.path.exists(self.filename) and "##MCEDIT.TEMP##" in path and not generation:
             raise IOError("The file does not exist")
         path = self.getFilePath(path)
         if not os.path.exists(path) and "players" not in path:
             os.makedirs(path)
 
         return path
+
+    def setPath(self, path):
+        self.filename = path
 
     # --- Region files ---
 
@@ -952,7 +957,7 @@ class AnvilWorldFolder(object):
         return MCRegionFile(filepath, (rx, rz))
 
     def findRegionFiles(self):
-        regionDir = self.getFolderPath("region")
+        regionDir = self.getFolderPath("region", generation=True)
 
         regionFiles = os.listdir(regionDir)
         for filename in regionFiles:
@@ -1074,6 +1079,7 @@ class MCInfdevOldLevel(ChunkedLevelMixin, EntityLevel):
 
         # maps (cx, cz) pairs to AnvilChunkData
         self._loadedChunkData = {}
+        self.recentChunks = collections.deque(maxlen=20)
 
         self.chunksNeedingLighting = set()
         self._allChunks = None
@@ -1133,6 +1139,7 @@ class MCInfdevOldLevel(ChunkedLevelMixin, EntityLevel):
             f.write(struct.pack(">q", self.initTime))
             f.flush()
             os.fsync(f.fileno())
+        logging.getLogger().info("Re-acquired session lock")
 
     def checkSessionLock(self):
         if self.readonly:
@@ -1226,6 +1233,7 @@ class MCInfdevOldLevel(ChunkedLevelMixin, EntityLevel):
             self.unsavedWorkFolder.closeRegions()
 
         self._allChunks = None
+        self.recentChunks.clear()
         self._loadedChunks.clear()
         self._loadedChunkData.clear()
 
@@ -1269,6 +1277,7 @@ class MCInfdevOldLevel(ChunkedLevelMixin, EntityLevel):
     LastPlayed = TagProperty('LastPlayed', nbt.TAG_Long, lambda self: long(time.time() * 1000))
 
     LevelName = TagProperty('LevelName', nbt.TAG_String, lambda self: self.displayName)
+    GeneratorName = TagProperty('generatorName', nbt.TAG_String, 'default')
 
     MapFeatures = TagProperty('MapFeatures', nbt.TAG_Byte, 1)
 
@@ -1596,6 +1605,7 @@ class MCInfdevOldLevel(ChunkedLevelMixin, EntityLevel):
         chunk = AnvilChunk(chunkData)
 
         self._loadedChunks[cx, cz] = chunk
+        self.recentChunks.append(chunk)
         return chunk
 
     def markDirtyChunk(self, cx, cz):
@@ -1690,10 +1700,17 @@ class MCInfdevOldLevel(ChunkedLevelMixin, EntityLevel):
 
         return entities
 
+    def getTileEntitiesInBox(self, box):
+        tileEntites = []
+        for chunk, slices, point in self.getChunkSlices(box):
+            tileEntites += chunk.getTileEntitiesInBox(box)
+
+        return tileEntites
+
     def getTileTicksInBox(self, box):
         tileticks = []
         for chunk, slices, point in self.getChunkSlices(box):
-            tileticks += chunk.getEntitiesInBox(box)
+            tileticks += chunk.getTileTicksInBox(box)
 
         return tileticks
 
