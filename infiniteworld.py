@@ -34,6 +34,7 @@ from regionfile import MCRegionFile
 import version_utils
 import player
 import logging
+from uuid import UUID
 
 log = getLogger(__name__)
 
@@ -1098,8 +1099,15 @@ class MCInfdevOldLevel(ChunkedLevelMixin, EntityLevel):
                 self.playersFolder = self.worldFolder.getFolderPath("playerdata")
                 self.oldPlayerFolderFormat = False
             self.players = [x[:-4] for x in os.listdir(self.playersFolder) if x.endswith(".dat")]
+            for player in self.players:
+                try:
+                    UUID(player, version=4)
+                except ValueError:
+                    print "{0} does not seem to be in a valid UUID format".format(player)
+                    self.players.remove(player)
             if "Player" in self.root_tag["Data"]:
                 self.players.append("Player")
+                
 
             self.preloadDimensions()
 
@@ -1867,7 +1875,7 @@ class MCInfdevOldLevel(ChunkedLevelMixin, EntityLevel):
         playerTag["Dimension"].value = d
 
     def setPlayerPosition(self, (x, y, z), player="Player"):
-        posList = nbt.TAG_List([nbt.TAG_Double(p) for p in (x, y - 1.8, z)])
+        posList = nbt.TAG_List([nbt.TAG_Double(p) for p in (x, y - 1.75, z)])
         playerTag = self.getPlayerTag(player)
 
         playerTag["Pos"] = posList
@@ -1877,7 +1885,7 @@ class MCInfdevOldLevel(ChunkedLevelMixin, EntityLevel):
         posList = playerTag["Pos"]
 
         x, y, z = map(lambda x: x.value, posList)
-        return x, y + 1.8, z
+        return x, y + 1.75, z
 
     def setPlayerOrientation(self, yp, player="Player"):
         self.getPlayerTag(player)["Rotation"] = nbt.TAG_List([nbt.TAG_Float(p) for p in yp])
