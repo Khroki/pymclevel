@@ -5,13 +5,11 @@ Created on Jul 22, 2011
 '''
 import collections
 
-import copy
 from datetime import datetime
 import itertools
 from logging import getLogger
 from math import floor
 import os
-import re
 import random
 import shutil
 import struct
@@ -21,7 +19,6 @@ import weakref
 import zlib
 import sys
 
-import blockrotation
 from box import BoundingBox
 from entity import Entity, TileEntity, TileTick
 from faces import FaceXDecreasing, FaceXIncreasing, FaceZDecreasing, FaceZIncreasing
@@ -31,8 +28,6 @@ from mclevelbase import ChunkMalformed, ChunkNotPresent, ChunkAccessDenied,Chunk
 import nbt
 from numpy import array, clip, maximum, zeros
 from regionfile import MCRegionFile
-import version_utils
-import player
 import logging
 from uuid import UUID
 
@@ -914,9 +909,6 @@ class AnvilWorldFolder(object):
 
         return path
 
-    def setPath(self, path):
-        self.filename = path
-
     # --- Region files ---
 
     def getRegionFilename(self, rx, rz):
@@ -1048,6 +1040,10 @@ class MCInfdevOldLevel(ChunkedLevelMixin, EntityLevel):
         self.players = []
         assert not (create and readonly)
 
+        self.lockAcquireFuncs = []
+        self.lockLoseFuncs = []
+        self.initTime = -1
+
         if os.path.basename(filename) in ("level.dat", "level.dat_old"):
             filename = os.path.dirname(filename)
 
@@ -1065,15 +1061,20 @@ class MCInfdevOldLevel(ChunkedLevelMixin, EntityLevel):
         self.readonly = readonly
         if not readonly:
             self.acquireSessionLock()
-
             workFolderPath = self.worldFolder.getFolderPath("##MCEDIT.TEMP##")
+            workFolderPath2 = self.worldFolder.getFolderPath("##MCEDIT.TEMP2##")
             if os.path.exists(workFolderPath):
                 # xxxxxxx Opening a world a second time deletes the first world's work folder and crashes when the first
                 # world tries to read a modified chunk from the work folder. This mainly happens when importing a world
                 # into itself after modifying it.
                 shutil.rmtree(workFolderPath, True)
+            if os.path.exists(workFolderPath2):
+                shutil.rmtree(workFolderPath2, True)
 
             self.unsavedWorkFolder = AnvilWorldFolder(workFolderPath)
+            self.fileEditsFolder = AnvilWorldFolder(workFolderPath2)
+
+            self.editFileNumber = 1
 
         # maps (cx, cz) pairs to AnvilChunk
         self._loadedChunks = weakref.WeakValueDictionary()
@@ -1107,7 +1108,6 @@ class MCInfdevOldLevel(ChunkedLevelMixin, EntityLevel):
                     self.players.remove(player)
             if "Player" in self.root_tag["Data"]:
                 self.players.append("Player")
-                
 
             self.preloadDimensions()
 
@@ -1141,13 +1141,19 @@ class MCInfdevOldLevel(ChunkedLevelMixin, EntityLevel):
         self.createPlayer("Player")
 
     def acquireSessionLock(self):
-        lockfile = self.worldFolder.getFilePath("session.lock")
+        lock_file = self.worldFolder.getFilePath("session.lock")
         self.initTime = int(time.time() * 1000)
-        with file(lockfile, "wb") as f:
+        with file(lock_file, "wb") as f:
             f.write(struct.pack(">q", self.initTime))
             f.flush()
             os.fsync(f.fileno())
-        logging.getLogger().info("Re-acquired session lock")
+
+        for function in self.lockAcquireFuncs:
+            function()
+
+    def setSessionLockCallback(self, acquire_func, lose_func):
+        self.lockAcquireFuncs.append(acquire_func)
+        self.lockLoseFuncs.append(lose_func)
 
     def checkSessionLock(self):
         if self.readonly:
@@ -1159,9 +1165,9 @@ class MCInfdevOldLevel(ChunkedLevelMixin, EntityLevel):
         except struct.error:
             lock = -1
         if lock != self.initTime:
-            # I should raise an error, but this seems to always fire the exception, so I will just try to aquire it instead
+            for function in self.lockLoseFuncs:
+                function()
             raise SessionLockLost("Session lock lost. This world is being accessed from another location.")
-            #self.acquireSessionLock()
 
     def loadLevelDat(self, create=False, random_seed=None, last_played=None):
 
@@ -1253,6 +1259,7 @@ class MCInfdevOldLevel(ChunkedLevelMixin, EntityLevel):
         try:
             self.checkSessionLock()
             shutil.rmtree(self.unsavedWorkFolder.filename, True)
+            shutil.rmtree(self.fileEditsFolder.filename, True)
         except SessionLockLost:
             pass
 
@@ -1841,9 +1848,12 @@ class MCInfdevOldLevel(ChunkedLevelMixin, EntityLevel):
         for name, val in zip(("SpawnX", "SpawnY", "SpawnZ"), pos):
             playerSpawnTag[name] = nbt.TAG_Int(val)
 
-    def getPlayerPath(self, player):
+    def getPlayerPath(self, player, dim=0):
         assert player != "Player"
-        return os.path.join(self.playersFolder, "%s.dat" % player)
+        if dim != 0:
+            return os.path.join(os.path.dirname(self.level.filename), "DIM%s" % dim, "playerdata", "%s.dat" % player)
+        else:
+            return os.path.join(self.playersFolder, "%s.dat" % player)
 
     def getPlayerTag(self, player="Player"):
         if player == "Player":
